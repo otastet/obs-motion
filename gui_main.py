@@ -8,6 +8,8 @@ import os
 import math
 from dotenv import load_dotenv
 import numpy as np
+import random
+from scipy import fft
 
 # Import your existing modules
 from obs_controller import OBSController
@@ -318,157 +320,636 @@ class CircularMeterKnob(tk.Canvas):
             return self.current_level
 
 
-class OscilloscopeWidget(tk.Canvas):
-    """Real-time oscilloscope display for audio waveform"""
+class ArtisticAudioVisualizer(tk.Canvas):
+    """Artistic audio visualizer with multiple visualization modes"""
 
-    def __init__(self, parent, width=400, height=150, **kwargs):
+    def __init__(self, parent, width=800, height=200, **kwargs):
         super().__init__(
             parent,
             width=width,
             height=height,
-            bg="#0a0a0a",  # Darker background
+            bg="#000011",  # Deep space blue
             highlightthickness=2,
-            highlightbackground="#00ff41",  # Matrix green border
+            highlightbackground="#4444ff",
             **kwargs,
         )
 
         self.width = width
         self.height = height
+        self.center_x = width // 2
         self.center_y = height // 2
+
+        # Visualization modes
+        self.modes = [
+            "spectrum",
+            "radial_wave",
+            "particles",
+            "geometric",
+            "flowing_wave",
+        ]
+        self.current_mode = 0
+
+        # Audio data storage
         self.waveform_data = np.zeros(width)
+        self.spectrum_data = np.zeros(128)  # FFT bins
         self.data_lock = threading.Lock()
 
-        # Cool colors
-        self.grid_color = "#001a00"  # Dark green grid
-        self.waveform_color = "#00ff41"  # Bright matrix green
-        self.center_line_color = "#004400"  # Medium green center line
-        self.glow_color = "#88ff88"  # Light green glow
+        # Enhanced audio analysis
+        self.audio_history = []  # Store recent audio for better analysis
+        self.max_history_length = 10
+        self.bass_energy = 0.0
+        self.mid_energy = 0.0
+        self.treble_energy = 0.0
+        self.overall_energy = 0.0
+        self.peak_detection_threshold = 0.3
+        self.energy_smoothing = 0.8  # Smoothing factor for energy changes
 
-        self.draw_grid()
+        # Animation state
+        self.frame_count = 0
+        self.particles = []
+        self.trails = []
+        self.energy_boost = 1.0  # Dynamic energy multiplier
+        self.last_peak_time = 0
 
-    def draw_grid(self):
-        """Draw the cool oscilloscope grid"""
+        # Color palettes
+        self.color_palettes = [
+            ["#ff0080", "#ff8000", "#ffff00", "#80ff00", "#00ff80"],  # Neon rainbow
+            ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7"],  # Warm sunset
+            ["#a8e6cf", "#dcedc1", "#ffd3a5", "#ffd8a8", "#f8b195"],  # Soft pastels
+            [
+                "#667eea",
+                "#764ba2",
+                "#f093fb",
+                "#f5576c",
+                "#4facfe",
+            ],  # Purple-pink gradient
+            ["#00c9ff", "#92fe9d", "#ffcd3c", "#fd746c", "#ff9068"],  # Ocean vibes
+        ]
+        self.current_palette = 0
+
+        # Initialize particles for particle mode
+        self.init_particles()
+
+        # Bind click to cycle modes
+        self.bind("<Button-1>", self.cycle_mode)
+
+        self.draw_background()
+
+    def init_particles(self):
+        """Initialize particle system"""
+        self.particles = []
+        for _ in range(80):  # Increased particle count
+            particle = {
+                "x": random.randint(0, self.width),
+                "y": random.randint(0, self.height),
+                "vx": random.uniform(-1, 1),
+                "vy": random.uniform(-1, 1),
+                "size": random.uniform(1, 3),
+                "life": random.uniform(0.5, 1.0),
+                "color_index": random.randint(0, 4),
+                "energy_response": random.uniform(
+                    0.5, 2.0
+                ),  # Individual energy sensitivity
+                "base_size": random.uniform(1, 3),
+            }
+            self.particles.append(particle)
+
+    def cycle_mode(self, event=None):
+        """Cycle through visualization modes"""
+        self.current_mode = (self.current_mode + 1) % len(self.modes)
+        self.current_palette = (self.current_palette + 1) % len(self.color_palettes)
+        self.draw_background()
+
+    def get_color_from_palette(self, index, alpha=1.0):
+        """Get color from current palette"""
+        colors = self.color_palettes[self.current_palette]
+        return colors[index % len(colors)]
+
+    def analyze_audio_frequencies(self, audio_data):
+        """Analyze audio into frequency bands for more responsive visuals"""
+        if len(audio_data) < 256:
+            return
+
+        # Calculate FFT
+        fft_data = np.abs(fft.fft(audio_data[:512]))[:256]
+
+        # Normalize
+        if np.max(fft_data) > 0:
+            fft_data = fft_data / np.max(fft_data)
+
+        # Split into frequency bands
+        bass_range = fft_data[1:20]  # Low frequencies
+        mid_range = fft_data[20:80]  # Mid frequencies
+        treble_range = fft_data[80:128]  # High frequencies
+
+        # Calculate energy for each band with enhanced sensitivity
+        new_bass = np.mean(bass_range) * 3.0  # Boost bass response
+        new_mid = np.mean(mid_range) * 2.0  # Boost mid response
+        new_treble = np.mean(treble_range) * 2.5  # Boost treble response
+        new_overall = np.mean(np.abs(audio_data)) * 4.0  # Overall energy boost
+
+        # Smooth the energy changes but keep responsiveness
+        smoothing = self.energy_smoothing
+        self.bass_energy = self.bass_energy * smoothing + new_bass * (1 - smoothing)
+        self.mid_energy = self.mid_energy * smoothing + new_mid * (1 - smoothing)
+        self.treble_energy = self.treble_energy * smoothing + new_treble * (
+            1 - smoothing
+        )
+        self.overall_energy = self.overall_energy * smoothing + new_overall * (
+            1 - smoothing
+        )
+
+        # Detect peaks for extra visual effects
+        if new_overall > self.peak_detection_threshold:
+            self.last_peak_time = self.frame_count
+            self.energy_boost = min(3.0, self.energy_boost + 0.5)
+        else:
+            self.energy_boost = max(1.0, self.energy_boost * 0.95)
+
+    def draw_background(self):
+        """Draw animated background"""
         self.delete("all")
 
-        # Draw subtle horizontal grid lines
-        for i in range(0, self.height + 1, self.height // 8):
-            self.create_line(0, i, self.width, i, fill=self.grid_color, width=1)
+        # Draw animated background grid or pattern
+        if self.current_mode in ["spectrum", "flowing_wave"]:
+            # Grid background with energy response
+            grid_intensity = min(255, int(self.overall_energy * 100))
+            grid_color = f"#{grid_intensity:02x}{grid_intensity // 2:02x}{grid_intensity // 4:02x}"
 
-        # Draw subtle vertical grid lines
-        for i in range(0, self.width + 1, self.width // 16):
-            self.create_line(i, 0, i, self.height, fill=self.grid_color, width=1)
-
-        # Draw center line (0V reference) with glow effect
-        self.create_line(
-            0,
-            self.center_y,
-            self.width,
-            self.center_y,
-            fill=self.center_line_color,
-            width=3,
-        )
-
-        # Add corner indicators for that retro scope look
-        corner_size = 10
-        # Top-left
-        self.create_line(0, 0, corner_size, 0, fill=self.waveform_color, width=2)
-        self.create_line(0, 0, 0, corner_size, fill=self.waveform_color, width=2)
-        # Top-right
-        self.create_line(
-            self.width - corner_size,
-            0,
-            self.width,
-            0,
-            fill=self.waveform_color,
-            width=2,
-        )
-        self.create_line(
-            self.width, 0, self.width, corner_size, fill=self.waveform_color, width=2
-        )
-        # Bottom-left
-        self.create_line(
-            0,
-            self.height - corner_size,
-            0,
-            self.height,
-            fill=self.waveform_color,
-            width=2,
-        )
-        self.create_line(
-            0, self.height, corner_size, self.height, fill=self.waveform_color, width=2
-        )
-        # Bottom-right
-        self.create_line(
-            self.width,
-            self.height - corner_size,
-            self.width,
-            self.height,
-            fill=self.waveform_color,
-            width=2,
-        )
-        self.create_line(
-            self.width - corner_size,
-            self.height,
-            self.width,
-            self.height,
-            fill=self.waveform_color,
-            width=2,
-        )
+            for i in range(0, self.width, 40):
+                self.create_line(i, 0, i, self.height, fill=grid_color, width=1)
+            for i in range(0, self.height, 20):
+                self.create_line(0, i, self.width, i, fill=grid_color, width=1)
+        elif self.current_mode == "radial_wave":
+            # Concentric circles that pulse with bass
+            base_spacing = 30
+            pulse_spacing = base_spacing - int(self.bass_energy * 15)
+            for radius in range(
+                20, max(self.width, self.height), max(15, pulse_spacing)
+            ):
+                intensity = min(255, int(self.bass_energy * 150))
+                circle_color = (
+                    f"#{intensity // 4:02x}{intensity // 3:02x}{intensity:02x}"
+                )
+                self.create_oval(
+                    self.center_x - radius,
+                    self.center_y - radius,
+                    self.center_x + radius,
+                    self.center_y + radius,
+                    outline=circle_color,
+                    width=1,
+                )
 
     def update_waveform(self, audio_data):
-        """Update the waveform display with new audio data"""
+        """Update visualization with new audio data"""
         if len(audio_data) == 0:
             return
 
         with self.data_lock:
-            # Downsample audio data to fit display width
+            # Store waveform data
             if len(audio_data) > self.width:
-                # Take every nth sample
                 step = len(audio_data) // self.width
                 self.waveform_data = audio_data[::step][: self.width]
             else:
-                # Pad or repeat data to fill width
                 self.waveform_data = np.resize(audio_data, self.width)
 
-            # Normalize to display range with some headroom
-            if np.max(np.abs(self.waveform_data)) > 0:
-                self.waveform_data = (
-                    self.waveform_data / np.max(np.abs(self.waveform_data)) * 0.8
-                )  # Scale to 80% for better visual
+            # Enhanced audio analysis
+            self.analyze_audio_frequencies(audio_data)
 
-        self.draw_waveform()
+            # Store audio history for trend analysis
+            self.audio_history.append(np.mean(np.abs(audio_data)))
+            if len(self.audio_history) > self.max_history_length:
+                self.audio_history.pop(0)
 
-    def draw_waveform(self):
-        """Draw the current waveform with cool effects"""
-        self.draw_grid()
+            # Calculate FFT for spectrum analysis with better resolution
+            if len(audio_data) >= 512:
+                fft_data = np.abs(fft.fft(audio_data[:512]))[:128]
+                self.spectrum_data = (
+                    fft_data / np.max(fft_data) if np.max(fft_data) > 0 else fft_data
+                )
+
+        self.frame_count += 1
+        self.draw_visualization()
+
+    def draw_visualization(self):
+        """Draw the current visualization mode"""
+        mode = self.modes[self.current_mode]
+
+        if mode == "spectrum":
+            self.draw_spectrum_analyzer()
+        elif mode == "radial_wave":
+            self.draw_radial_waveform()
+        elif mode == "particles":
+            self.draw_particle_system()
+        elif mode == "geometric":
+            self.draw_geometric_patterns()
+        elif mode == "flowing_wave":
+            self.draw_flowing_waveform()
+
+        # Draw mode indicator with energy level
+        energy_text = f"Energy: {self.overall_energy:.2f}"
+        self.create_text(
+            self.width - 10,
+            10,
+            text=f"Mode: {mode.title()} | {energy_text}",
+            fill="#666666",
+            font=("Arial", 10),
+            anchor="ne",
+        )
+
+    def draw_spectrum_analyzer(self):
+        """Draw frequency spectrum as artistic bars"""
+        self.draw_background()
 
         with self.data_lock:
-            if len(self.waveform_data) < 2:
-                return
+            spectrum = self.spectrum_data
 
-            # Create points for the main waveform
+        bar_width = self.width / len(spectrum)
+        max_height = self.height - 40
+
+        for i, magnitude in enumerate(spectrum):
+            # Enhanced sensitivity - show even small frequencies
+            if magnitude > 0.005:  # Lower threshold
+                x = i * bar_width
+                # Apply energy boost and frequency-specific scaling
+                freq_boost = 1.0
+                if i < 20:  # Bass frequencies
+                    freq_boost = 1.0 + self.bass_energy * 2
+                elif i < 80:  # Mid frequencies
+                    freq_boost = 1.0 + self.mid_energy * 1.5
+                else:  # Treble frequencies
+                    freq_boost = 1.0 + self.treble_energy * 1.8
+
+                height = magnitude * max_height * freq_boost * self.energy_boost
+                height = min(height, max_height)  # Cap at max height
+
+                # Create gradient effect with more segments for smoother look
+                segments = max(1, int(height / 3))
+                for seg in range(segments):
+                    seg_height = min(3, height - seg * 3)
+                    if seg_height <= 0:
+                        break
+
+                    color_index = int((seg / segments) * 4)
+                    color = self.get_color_from_palette(color_index)
+
+                    self.create_rectangle(
+                        x,
+                        self.height - seg * 3 - seg_height,
+                        x + bar_width - 1,
+                        self.height - seg * 3,
+                        fill=color,
+                        outline="",
+                    )
+
+                # Enhanced glow effect for high energy
+                if height > max_height * 0.5 or self.overall_energy > 0.3:
+                    glow_width = 2 + int(self.overall_energy * 4)
+                    self.create_rectangle(
+                        x - glow_width,
+                        self.height - height - 10,
+                        x + bar_width + glow_width,
+                        self.height - height + 5,
+                        outline=self.get_color_from_palette(0),
+                        width=glow_width,
+                    )
+
+    def draw_radial_waveform(self):
+        """Draw waveform in a radial/circular pattern"""
+        self.draw_background()
+
+        with self.data_lock:
+            waveform = self.waveform_data
+
+        if len(waveform) == 0:
+            return
+
+        # Dynamic radius based on energy
+        base_radius = 40 + int(self.overall_energy * 40)
+        max_radius_extension = 60 + int(self.overall_energy * 80)
+
+        points = []
+        glow_points = []
+
+        # Multiple rings for richer visual
+        for ring in range(3):
+            ring_points = []
+            ring_scale = 1.0 - (ring * 0.2)
+            ring_radius = base_radius * ring_scale
+
+            for i, sample in enumerate(waveform):
+                angle = (i / len(waveform)) * 2 * math.pi
+                # Enhanced animation with energy response
+                animated_angle = angle + (
+                    self.frame_count * 0.03 * (1 + self.overall_energy)
+                )
+
+                # Different frequency responses for different rings
+                if ring == 0:  # Outer ring - overall energy
+                    radius = (
+                        ring_radius
+                        + abs(sample) * max_radius_extension * self.energy_boost
+                    )
+                elif ring == 1:  # Middle ring - mid frequencies
+                    radius = ring_radius + abs(sample) * max_radius_extension * 0.7 * (
+                        1 + self.mid_energy
+                    )
+                else:  # Inner ring - bass frequencies
+                    radius = ring_radius + abs(sample) * max_radius_extension * 0.5 * (
+                        1 + self.bass_energy
+                    )
+
+                x = self.center_x + radius * math.cos(animated_angle)
+                y = self.center_y + radius * math.sin(animated_angle)
+
+                ring_points.extend([x, y])
+
+                # Create glow points for high amplitude (more sensitive)
+                if abs(sample) > 0.3 or self.overall_energy > 0.2:
+                    glow_radius = radius + 15 + int(self.treble_energy * 20)
+                    glow_x = self.center_x + glow_radius * math.cos(animated_angle)
+                    glow_y = self.center_y + glow_radius * math.sin(animated_angle)
+                    glow_points.extend([glow_x, glow_y])
+
+            # Draw ring
+            if len(ring_points) >= 4:
+                color = self.get_color_from_palette(ring)
+                width = 3 - ring
+                self.create_line(ring_points, fill=color, width=width, smooth=True)
+
+        # Draw glow effect
+        if len(glow_points) >= 4:
+            self.create_line(
+                glow_points, fill=self.get_color_from_palette(1), width=6, smooth=True
+            )
+
+        # Enhanced center pulse
+        pulse_size = 15 + (self.overall_energy * 50) + (self.bass_energy * 30)
+        pulse_color = self.get_color_from_palette(2)
+        self.create_oval(
+            self.center_x - pulse_size,
+            self.center_y - pulse_size,
+            self.center_x + pulse_size,
+            self.center_y + pulse_size,
+            fill=pulse_color,
+            outline=self.get_color_from_palette(3),
+            width=3,
+        )
+
+    def draw_particle_system(self):
+        """Draw particle system that reacts to audio"""
+        self.draw_background()
+
+        # Update particles with enhanced audio response
+        for particle in self.particles:
+            # Move particles
+            particle["x"] += particle["vx"]
+            particle["y"] += particle["vy"]
+
+            # Enhanced audio reaction
+            energy_factor = particle["energy_response"]
+
+            # Different particles respond to different frequencies
+            if particle["color_index"] < 2:  # Bass-responsive particles
+                response_energy = self.bass_energy * energy_factor
+            elif particle["color_index"] < 4:  # Mid-responsive particles
+                response_energy = self.mid_energy * energy_factor
+            else:  # Treble-responsive particles
+                response_energy = self.treble_energy * energy_factor
+
+            if response_energy > 0.05:  # Lower threshold for more responsiveness
+                # Add energy-based movement
+                particle["vx"] += random.uniform(-1, 1) * response_energy
+                particle["vy"] += random.uniform(-1, 1) * response_energy
+                particle["size"] = particle["base_size"] + response_energy * 8
+
+                # Limit velocity to prevent particles from going too fast
+                max_vel = 5 + response_energy * 3
+                particle["vx"] = max(-max_vel, min(max_vel, particle["vx"]))
+                particle["vy"] = max(-max_vel, min(max_vel, particle["vy"]))
+            else:
+                particle["size"] = max(particle["base_size"], particle["size"] * 0.9)
+                # Apply friction when no audio
+                particle["vx"] *= 0.98
+                particle["vy"] *= 0.98
+
+            # Wrap around screen
+            if particle["x"] < 0:
+                particle["x"] = self.width
+            elif particle["x"] > self.width:
+                particle["x"] = 0
+            if particle["y"] < 0:
+                particle["y"] = self.height
+            elif particle["y"] > self.height:
+                particle["y"] = 0
+
+            # Draw particle with energy-based effects
+            color = self.get_color_from_palette(particle["color_index"])
+            size = particle["size"]
+
+            # Add glow effect for high energy particles
+            if size > particle["base_size"] * 2:
+                glow_size = size + 3
+                self.create_oval(
+                    particle["x"] - glow_size,
+                    particle["y"] - glow_size,
+                    particle["x"] + glow_size,
+                    particle["y"] + glow_size,
+                    fill="",
+                    outline=color,
+                    width=2,
+                )
+
+            self.create_oval(
+                particle["x"] - size,
+                particle["y"] - size,
+                particle["x"] + size,
+                particle["y"] + size,
+                fill=color,
+                outline="",
+            )
+
+            # Enhanced connections between particles
+            for other in self.particles:
+                if other != particle:
+                    dx = particle["x"] - other["x"]
+                    dy = particle["y"] - other["y"]
+                    distance = math.sqrt(dx * dx + dy * dy)
+
+                    # More connections when there's audio energy
+                    max_distance = 80 + int(self.overall_energy * 60)
+                    if distance < max_distance and self.overall_energy > 0.02:
+                        alpha = max(0, 1 - distance / max_distance)
+                        line_width = 1 + int(self.overall_energy * 3)
+                        self.create_line(
+                            particle["x"],
+                            particle["y"],
+                            other["x"],
+                            other["y"],
+                            fill=self.get_color_from_palette(2),
+                            width=line_width,
+                        )
+
+    def draw_geometric_patterns(self):
+        """Draw geometric patterns that morph with audio"""
+        self.draw_background()
+
+        # Enhanced geometric response
+        num_shapes = 5
+        for i in range(num_shapes):
+            # Calculate shape parameters based on different frequency bands
+            base_radius = 25 + i * 12
+
+            # Different shapes respond to different frequencies
+            if i < 2:  # First shapes respond to bass
+                energy_response = self.bass_energy
+            elif i < 4:  # Middle shapes respond to mids
+                energy_response = self.mid_energy
+            else:  # Last shape responds to treble
+                energy_response = self.treble_energy
+
+            radius = base_radius + energy_response * 60 * self.energy_boost
+            sides = max(3, 6 + int(energy_response * 15))  # More dramatic side changes
+            rotation = (self.frame_count * 0.08 * (1 + energy_response)) + (i * 0.4)
+
+            # Shape position with energy-based movement
+            offset_x = (i - num_shapes // 2) * 120
+            shape_x = (
+                self.center_x
+                + offset_x
+                + math.cos(self.frame_count * 0.05 + i) * energy_response * 30
+            )
+            shape_y = self.center_y + math.sin(self.frame_count * 0.03 + i) * (
+                20 + energy_response * 40
+            )
+
+            # Create polygon points
             points = []
-            for i, sample in enumerate(self.waveform_data):
-                x = i
-                y = self.center_y - (sample * (self.height // 2 - 15))
+            for vertex in range(sides):
+                angle = (vertex / sides) * 2 * math.pi + rotation
+                px = shape_x + radius * math.cos(angle)
+                py = shape_y + radius * math.sin(angle)
+                points.extend([px, py])
+
+            if len(points) >= 6:
+                # Enhanced colors based on energy
+                color_intensity = min(1.0, energy_response * 2)
+                color = self.get_color_from_palette(i)
+                outline_color = self.get_color_from_palette((i + 1) % 5)
+
+                # Draw filled shape with energy-based transparency effect
+                self.create_polygon(
+                    points,
+                    fill=color,
+                    outline=outline_color,
+                    width=2 + int(energy_response * 3),
+                )
+
+                # Add multiple inner shapes for depth when energy is high
+                inner_layers = 1 + int(energy_response * 3)
+                for layer in range(inner_layers):
+                    inner_points = []
+                    inner_scale = 0.8 - (layer * 0.15)
+                    inner_radius = radius * inner_scale
+
+                    for vertex in range(sides):
+                        angle = (
+                            (vertex / sides) * 2 * math.pi + rotation + (layer * 0.2)
+                        )
+                        px = shape_x + inner_radius * math.cos(angle)
+                        py = shape_y + inner_radius * math.sin(angle)
+                        inner_points.extend([px, py])
+
+                    if len(inner_points) >= 6:
+                        self.create_polygon(
+                            inner_points,
+                            fill="",
+                            outline=self.get_color_from_palette((i + layer + 2) % 5),
+                            width=max(1, 2 - layer),
+                        )
+
+    def draw_flowing_waveform(self):
+        """Draw flowing waveform with trails and effects"""
+        self.draw_background()
+
+        with self.data_lock:
+            waveform = self.waveform_data
+
+        if len(waveform) == 0:
+            return
+
+        # Enhanced flowing layers with frequency separation
+        layers = 4  # More layers for richer visual
+        for layer in range(layers):
+            points = []
+            layer_offset = (layer - layers // 2) * 25
+
+            # Different layers respond to different frequencies
+            if layer == 0:  # Bass layer
+                layer_scale = 1.2 * (1 + self.bass_energy)
+                time_offset = self.frame_count * 0.08
+            elif layer == 1:  # Mid layer
+                layer_scale = 1.0 * (1 + self.mid_energy)
+                time_offset = self.frame_count * 0.12
+            elif layer == 2:  # Treble layer
+                layer_scale = 0.8 * (1 + self.treble_energy)
+                time_offset = self.frame_count * 0.15
+            else:  # Overall energy layer
+                layer_scale = 0.6 * (1 + self.overall_energy)
+                time_offset = self.frame_count * 0.20
+
+            for i, sample in enumerate(waveform):
+                x = i * (self.width / len(waveform))
+                # Enhanced flowing animation with energy response
+                wave_amplitude = sample * 100 * layer_scale * self.energy_boost
+                flowing_wave = math.sin(x * 0.03 + time_offset) * (
+                    10 + self.overall_energy * 20
+                )
+                y = self.center_y + layer_offset + wave_amplitude + flowing_wave
                 points.extend([x, y])
 
-            # Draw glow effect (thicker, lighter line behind)
             if len(points) >= 4:
-                self.create_line(points, fill=self.glow_color, width=4, smooth=True)
+                color = self.get_color_from_palette(layer)
+                width = max(1, 5 - layer + int(self.overall_energy * 3))
+                self.create_line(points, fill=color, width=width, smooth=True)
 
-            # Draw main waveform line (thinner, brighter line on top)
-            if len(points) >= 4:
-                self.create_line(points, fill=self.waveform_color, width=2, smooth=True)
+        # Enhanced sparkle effects at peaks (more sensitive)
+        sparkle_threshold = 0.4 - (
+            self.overall_energy * 0.2
+        )  # Lower threshold when energy is high
+        for i, sample in enumerate(waveform):
+            if abs(sample) > sparkle_threshold:
+                x = i * (self.width / len(waveform))
+                y = self.center_y + sample * 100 * self.energy_boost
 
-            # Add peak indicators for high amplitude sections
-            for i, sample in enumerate(self.waveform_data):
-                if abs(sample) > 0.7:  # High amplitude
-                    x = i
-                    y = self.center_y - (sample * (self.height // 2 - 15))
-                    # Draw a small bright dot at peaks
-                    self.create_oval(
-                        x - 2, y - 2, x + 2, y + 2, fill="#ffff00", outline="#ffff00"
+                # Enhanced sparkle with energy response
+                sparkle_size = 3 + abs(sample) * 8 + self.treble_energy * 10
+                sparkle_color = self.get_color_from_palette(4)
+
+                # Main sparkle
+                self.create_oval(
+                    x - sparkle_size,
+                    y - sparkle_size,
+                    x + sparkle_size,
+                    y + sparkle_size,
+                    fill=sparkle_color,
+                    outline="",
+                )
+
+                # Enhanced sparkle rays with more rays for high energy
+                num_rays = 4 + int(self.overall_energy * 8)
+                for ray in range(num_rays):
+                    angle = (ray / num_rays) * 2 * math.pi
+                    ray_length = sparkle_size * (2 + self.overall_energy * 2)
+                    end_x = x + ray_length * math.cos(angle)
+                    end_y = y + ray_length * math.sin(angle)
+                    self.create_line(
+                        x,
+                        y,
+                        end_x,
+                        end_y,
+                        fill=sparkle_color,
+                        width=max(1, 2 + int(self.overall_energy * 2)),
                     )
 
 
@@ -547,14 +1028,14 @@ class OBSAutoRecorderGUI:
         # Oscilloscope Frame
         scope_frame = tk.LabelFrame(
             self.root,
-            text="Audio Waveform (Real-time)",
+            text="Artistic Audio Visualizer (click to change modes)",
             font=("Arial", 12, "bold"),
             bg="#2b2b2b",
             fg="white",
         )
         scope_frame.pack(pady=10, padx=20, fill="x")
 
-        self.oscilloscope = OscilloscopeWidget(scope_frame, width=750, height=150)
+        self.oscilloscope = ArtisticAudioVisualizer(scope_frame, width=750, height=150)
         self.oscilloscope.pack(pady=10)
 
         # Combined Audio Meters Frame
@@ -837,7 +1318,7 @@ class OBSAutoRecorderGUI:
                         # Get current audio levels (both peak and RMS)
                         peak_level, rms_level = self.audio_detector.get_current_levels()
 
-                        # Get raw audio data for oscilloscope
+                        # Get raw audio data for visualization
                         raw_audio_data = self.audio_detector.get_current_audio_data()
 
                         # Update GUI in main thread
@@ -868,13 +1349,13 @@ class OBSAutoRecorderGUI:
         self.peak_meter_knob.set_level(peak_level)
         self.rms_meter_knob.set_level(rms_level)
 
-        # Get raw audio data for oscilloscope if not provided
+        # Get raw audio data for visualization if not provided
         if raw_audio_data is None and hasattr(
             self.audio_detector, "get_current_audio_data"
         ):
             raw_audio_data = self.audio_detector.get_current_audio_data()
 
-        # Update oscilloscope
+        # Update visualization
         if raw_audio_data is not None and len(raw_audio_data) > 0:
             self.oscilloscope.update_waveform(raw_audio_data)
 
