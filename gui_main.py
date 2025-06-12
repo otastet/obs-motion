@@ -115,16 +115,14 @@ class CircularMeterKnob(tk.Canvas):
                 style="arc",
             )
 
-        # Calculate threshold knob position
+        # Calculate threshold knob position - FIXED: Remove inversion
         threshold_ratio = (self.current_val - self.min_val) / (
             self.max_val - self.min_val
         )
-        # Invert the ratio to match the inverted mouse interaction
-        # Higher values should appear at lower angles (counterclockwise from start)
-        inverted_ratio = 1.0 - threshold_ratio
-        threshold_extent = inverted_ratio * 270
+        # Direct ratio - no inversion needed
+        threshold_extent = threshold_ratio * 270
 
-        # Draw threshold arc (outer ring) - extent matches inverted knob position
+        # Draw threshold arc (outer ring) - extent matches knob position
         if threshold_extent > 0:
             self.create_arc(
                 self.center_x - self.outer_radius + 3,
@@ -139,12 +137,15 @@ class CircularMeterKnob(tk.Canvas):
             )
 
         # Calculate knob handle position (at the END of the orange arc)
-        # The knob should be at the end of the arc
         knob_angle = -135 + threshold_extent  # End of the arc
         knob_angle_rad = math.radians(knob_angle)
         arc_radius = self.outer_radius - 3  # Same radius as the orange arc
+
+        # Fix coordinate system: tkinter Y increases downward, so we need to flip Y
         knob_x = self.center_x + arc_radius * math.cos(knob_angle_rad)
-        knob_y = self.center_y + arc_radius * math.sin(knob_angle_rad)
+        knob_y = self.center_y - arc_radius * math.sin(
+            knob_angle_rad
+        )  # Fix Y coordinate
 
         # Draw threshold knob handle
         self.create_oval(
@@ -221,16 +222,16 @@ class CircularMeterKnob(tk.Canvas):
 
     def on_click(self, event):
         """Handle mouse click"""
-        # Calculate current knob position using same logic as drawing
+        # Calculate current knob position using same logic as drawing - FIXED
         threshold_ratio = (self.current_val - self.min_val) / (
             self.max_val - self.min_val
         )
-        threshold_extent = threshold_ratio * 270
+        threshold_extent = threshold_ratio * 270  # Direct ratio, no inversion
         knob_angle = -135 + threshold_extent  # End of the arc
         knob_angle_rad = math.radians(knob_angle)
         arc_radius = self.outer_radius - 3
         knob_x = self.center_x + arc_radius * math.cos(knob_angle_rad)
-        knob_y = self.center_y + arc_radius * math.sin(knob_angle_rad)
+        knob_y = self.center_y - arc_radius * math.sin(knob_angle_rad)
 
         # Check if click is near the knob handle
         dx = event.x - knob_x
@@ -268,7 +269,8 @@ class CircularMeterKnob(tk.Canvas):
             return
 
         # Calculate angle from mouse position
-        angle = math.degrees(math.atan2(dy, dx))
+        # Fix coordinate system: flip dy to match the drawing coordinate system
+        angle = math.degrees(math.atan2(-dy, dx))  # Flip Y coordinate
 
         # Normalize angle to -135° to +135° range (270° total sweep)
         if angle < -135:
@@ -281,7 +283,7 @@ class CircularMeterKnob(tk.Canvas):
                 angle = 135
 
         # Convert angle to value (0 to 1 ratio)
-        # This should make clockwise movement increase the value
+        # Direct calculation - no inversion needed to match display
         value_ratio = (angle + 135) / 270
         new_val = self.min_val + value_ratio * (self.max_val - self.min_val)
 
@@ -346,6 +348,7 @@ class ArtisticAudioVisualizer(tk.Canvas):
             "particles",
             "geometric",
             "flowing_wave",
+            "dancing_figure",
         ]
         self.current_mode = 0
 
@@ -386,6 +389,19 @@ class ArtisticAudioVisualizer(tk.Canvas):
             ["#00c9ff", "#92fe9d", "#ffcd3c", "#fd746c", "#ff9068"],  # Ocean vibes
         ]
         self.current_palette = 0
+
+        # Dancing figure parameters
+        self.dance_moves = {
+            "idle": {"head_bob": 5, "arm_swing": 20, "leg_spread": 15, "speed": 0.05},
+            "medium": {"head_bob": 8, "arm_swing": 45, "leg_spread": 30, "speed": 0.1},
+            "energetic": {
+                "head_bob": 12,
+                "arm_swing": 90,
+                "leg_spread": 45,
+                "speed": 0.2,
+            },
+            "crazy": {"head_bob": 20, "arm_swing": 160, "leg_spread": 60, "speed": 0.4},
+        }
 
         # Initialize particles for particle mode
         self.init_particles()
@@ -545,6 +561,8 @@ class ArtisticAudioVisualizer(tk.Canvas):
             self.draw_geometric_patterns()
         elif mode == "flowing_wave":
             self.draw_flowing_waveform()
+        elif mode == "dancing_figure":
+            self.draw_dancing_figure()
 
         # Draw mode indicator with energy level
         energy_text = f"Energy: {self.overall_energy:.2f}"
@@ -900,7 +918,6 @@ class ArtisticAudioVisualizer(tk.Canvas):
 
             for i, sample in enumerate(waveform):
                 x = i * (self.width / len(waveform))
-                # Enhanced flowing animation with energy response
                 wave_amplitude = sample * 100 * layer_scale * self.energy_boost
                 flowing_wave = math.sin(x * 0.03 + time_offset) * (
                     10 + self.overall_energy * 20
@@ -951,6 +968,208 @@ class ArtisticAudioVisualizer(tk.Canvas):
                         fill=sparkle_color,
                         width=max(1, 2 + int(self.overall_energy * 2)),
                     )
+
+    def draw_dancing_figure(self):
+        """Draw a stick figure that dances to the music"""
+        self.draw_background()
+
+        # Determine dance intensity based on audio energy
+        intensity = self.overall_energy
+        bass_intensity = self.bass_energy
+        treble_intensity = self.treble_energy
+
+        # Select dance move set based on intensity
+        if intensity < 0.2:
+            moves = self.dance_moves["idle"]
+        elif intensity < 0.4:
+            moves = self.dance_moves["medium"]
+        elif intensity < 0.7:
+            moves = self.dance_moves["energetic"]
+        else:
+            moves = self.dance_moves["crazy"]
+
+        # Base figure dimensions
+        figure_height = 100
+        head_size = 20
+
+        # Calculate animation parameters
+        time = self.frame_count * moves["speed"]
+
+        # Head bob animation
+        head_y = self.center_y - figure_height / 2 + math.sin(time) * moves["head_bob"]
+
+        # Body sway
+        sway = math.sin(time * 0.7) * (5 + intensity * 20)
+        body_x = self.center_x + sway
+
+        # Draw the figure with glow effect for high energy
+        glow_color = self.get_color_from_palette(1)
+        main_color = self.get_color_from_palette(0)
+
+        if intensity > 0.5:
+            # Glow effect
+            glow_width = 2 + int(intensity * 4)
+            self.create_oval(
+                body_x - head_size - glow_width,
+                head_y - head_size - glow_width,
+                body_x + head_size + glow_width,
+                head_y + head_size + glow_width,
+                fill="",
+                outline=glow_color,
+                width=glow_width,
+            )
+
+        # Head
+        self.create_oval(
+            body_x - head_size,
+            head_y - head_size,
+            body_x + head_size,
+            head_y + head_size,
+            fill=main_color,
+            outline=main_color,
+        )
+
+        # Body
+        body_bottom = head_y + figure_height
+        self.create_line(
+            body_x, head_y + head_size, body_x, body_bottom, fill=main_color, width=3
+        )
+
+        # Arms with treble-based movement
+        arm_time = time * (1 + treble_intensity)
+        left_arm_angle = math.sin(arm_time) * moves["arm_swing"]
+        right_arm_angle = math.sin(arm_time + math.pi) * moves["arm_swing"]
+
+        arm_length = 40 + intensity * 10
+
+        # Left arm
+        left_arm_x = body_x + math.cos(math.radians(left_arm_angle + 180)) * arm_length
+        left_arm_y = (
+            head_y
+            + head_size
+            + figure_height / 3
+            + math.sin(math.radians(left_arm_angle + 180)) * arm_length
+        )
+        self.create_line(
+            body_x,
+            head_y + head_size + figure_height / 3,
+            left_arm_x,
+            left_arm_y,
+            fill=main_color,
+            width=3,
+        )
+
+        # Right arm
+        right_arm_x = body_x + math.cos(math.radians(right_arm_angle)) * arm_length
+        right_arm_y = (
+            head_y
+            + head_size
+            + figure_height / 3
+            + math.sin(math.radians(right_arm_angle)) * arm_length
+        )
+        self.create_line(
+            body_x,
+            head_y + head_size + figure_height / 3,
+            right_arm_x,
+            right_arm_y,
+            fill=main_color,
+            width=3,
+        )
+
+        # Legs with bass-based movement
+        leg_time = time * (1 + bass_intensity)
+        left_leg_angle = math.sin(leg_time) * moves["leg_spread"]
+        right_leg_angle = math.sin(leg_time + math.pi) * moves["leg_spread"]
+
+        leg_length = 50 + intensity * 10
+
+        # Left leg
+        left_leg_x = body_x + math.cos(math.radians(left_leg_angle + 180)) * leg_length
+        left_leg_y = (
+            body_bottom + math.sin(math.radians(left_leg_angle + 180)) * leg_length
+        )
+        self.create_line(
+            body_x, body_bottom, left_leg_x, left_leg_y, fill=main_color, width=3
+        )
+
+        # Right leg
+        right_leg_x = body_x + math.cos(math.radians(right_leg_angle)) * leg_length
+        right_leg_y = body_bottom + math.sin(math.radians(right_leg_angle)) * leg_length
+        self.create_line(
+            body_x, body_bottom, right_leg_x, right_leg_y, fill=main_color, width=3
+        )
+
+        # Add expression based on energy
+        eye_spacing = 8
+        mouth_width = 12
+
+        # Eyes
+        eye_y = head_y - 2
+        # Left eye
+        self.create_oval(
+            body_x - eye_spacing - 2,
+            eye_y - 2,
+            body_x - eye_spacing + 2,
+            eye_y + 2,
+            fill="white",
+            outline="white",
+        )
+        # Right eye
+        self.create_oval(
+            body_x + eye_spacing - 2,
+            eye_y - 2,
+            body_x + eye_spacing + 2,
+            eye_y + 2,
+            fill="white",
+            outline="white",
+        )
+
+        # Mouth (gets bigger and happier with energy)
+        mouth_y = head_y + 5
+        smile_depth = 5 + intensity * 5
+        self.create_arc(
+            body_x - mouth_width,
+            mouth_y - smile_depth,
+            body_x + mouth_width,
+            mouth_y + smile_depth,
+            start=0,
+            extent=-180,
+            fill="white",
+        )
+
+        # Add effects for high energy
+        if intensity > 0.6:
+            # Motion lines
+            for i in range(4):
+                angle = random.uniform(0, math.pi * 2)
+                length = random.uniform(20, 40) * intensity
+                start_x = body_x + random.uniform(-30, 30)
+                start_y = head_y + random.uniform(0, figure_height)
+                end_x = start_x + math.cos(angle) * length
+                end_y = start_y + math.sin(angle) * length
+                self.create_line(
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    fill=glow_color,
+                    width=2,
+                    dash=(5, 5),
+                )
+
+            # Excitement particles
+            for _ in range(int(intensity * 10)):
+                particle_x = body_x + random.uniform(-50, 50)
+                particle_y = random.uniform(head_y - 20, body_bottom + 20)
+                particle_size = random.uniform(2, 6)
+                self.create_oval(
+                    particle_x - particle_size,
+                    particle_y - particle_size,
+                    particle_x + particle_size,
+                    particle_y + particle_size,
+                    fill=self.get_color_from_palette(random.randint(0, 4)),
+                    outline="",
+                )
 
 
 class OBSAutoRecorderGUI:
